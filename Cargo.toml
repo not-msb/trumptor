@@ -1,0 +1,11 @@
+[package]
+name = "trumptor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.9.0"
+log = "0.4.17"
+pixels = "0.9.0"
+winit = "0.26.1"
+winit_input_helper = "0.12.0"
