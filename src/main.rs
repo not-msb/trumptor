@@ -23,13 +23,15 @@ const SIM_HEIGHT:    u32 = 960;
 //Color
 const WHITE:  &[u8; 4] = &[0xff, 0xff, 0xff, 0xff];
 const BLACK:  &[u8; 4] = &[0x00, 0x00, 0x00, 0xff];
+const RED:    &[u8; 4] = &[0xff, 0x00, 0x00, 0xff];
 const SELECT: &[u8; 4] = &[0xff, 0xff, 0xff, 0x64];
 
 //Paths
-const EXPORT:  &str = "map.txt";
-const EX_JSON: &str = "map.json";
+const EXPORT:     &str = "map.txt";
+const EXPORT_BG:  &str = "map_bg.txt";
+const EX_JSON:    &str = "map.json";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum ChunkType {
     Air,
     Dirt,
@@ -59,7 +61,8 @@ impl From<u8> for ChunkType {
 }
 
 struct World {
-    chunks: [[ChunkType; (SIM_WIDTH/CHUNK_SIZE) as usize]; (SIM_HEIGHT/CHUNK_SIZE) as usize],
+    chunks: [[[ChunkType; (SIM_WIDTH/CHUNK_SIZE) as usize]; (SIM_HEIGHT/CHUNK_SIZE) as usize]; 2],
+    chunk_mode: usize,
     offset: (usize, usize),
     tmp_chunk: (usize, usize),
     spawn_chunk: (usize, usize),
@@ -114,8 +117,12 @@ fn main() -> Result<(), Error> {
                 world.imprint();
             }
 
-            if input.mouse_held(1) {
+            if input.mouse_pressed(1) {
                 world.set_spawn(input.clone());
+            }
+
+            if input.mouse_pressed(2) {
+                world.set_chunk_mode();
             }
 
             if let Some(size) = input.window_resized() {
@@ -134,7 +141,8 @@ fn main() -> Result<(), Error> {
 impl World {
     fn new() -> Self {
         World {
-            chunks: [[ChunkType::Air; (SIM_WIDTH/CHUNK_SIZE) as usize]; (SIM_HEIGHT/CHUNK_SIZE) as usize],
+            chunks: [[[ChunkType::Air; (SIM_WIDTH/CHUNK_SIZE) as usize]; (SIM_HEIGHT/CHUNK_SIZE) as usize]; 2],
+            chunk_mode: 0,
             offset: (0, 0),
             tmp_chunk: (0, 0),
             spawn_chunk: (0, 0),
@@ -154,7 +162,10 @@ impl World {
         y += self.offset.0 / CHUNK_SIZE as usize;
         x = x.clamp(0, (SIM_WIDTH/CHUNK_SIZE) as usize-1);
         y = y.clamp(0, (SIM_HEIGHT/CHUNK_SIZE) as usize-1);
-        self.chunks[y][x] = self.chunk_type;
+        if self.chunk_mode == 1 && self.check_foreground_chunktype(x, y) {
+            return;
+        }
+        self.chunks[self.chunk_mode][y][x] = self.chunk_type;
     }
 
     fn set_spawn(&mut self, input: WinitInputHelper) {
@@ -201,6 +212,14 @@ impl World {
         } 
     }
 
+    fn set_chunk_mode(&mut self) {
+        self.chunk_mode = match self.chunk_mode {
+            0 => 1,
+            1 => 0,
+            _ => 0,
+        }
+    }
+
     fn draw(&self, frame: &mut [u8]) {
         let chunk_choice = match self.chunk_type {
             ChunkType::Air          => [[*WHITE; 32]; 32],
@@ -219,8 +238,8 @@ impl World {
             let mut y = (chk / WIDTH) as usize;
             x += self.offset.1;
             y += self.offset.0;
-            
-            let chunk = self.chunks[y/CHUNK_SIZE as usize][x/CHUNK_SIZE as usize];
+
+            let chunk = self.chunks[self.chunk_mode][y/CHUNK_SIZE as usize][x/CHUNK_SIZE as usize];
 
             let mut rgba = match chunk {
                 ChunkType::Air          => *WHITE,
@@ -242,6 +261,10 @@ impl World {
             if self.spawn_chunk == (y/CHUNK_SIZE as usize*16, x/CHUNK_SIZE as usize*16) && image_pixels(SPAWN, x, y)[3] != 0 {
                 rgba = image_pixels(SPAWN, x, y);
             }
+
+            if self.chunk_mode == 1 && self.check_foreground_chunktype(x/CHUNK_SIZE as usize, y/CHUNK_SIZE as usize) && image_pixels(NOT_SHOWN, x, y)[3] != 0 {
+                rgba = image_pixels(NOT_SHOWN, x, y);
+            }
             
             pix.copy_from_slice(&rgba);
         }
@@ -252,9 +275,24 @@ impl World {
             fs::remove_file(EXPORT).unwrap();
         }
         let mut file = File::create(EXPORT).unwrap();
-        for h in self.chunks.iter() {
+        for h in self.chunks[0].iter() {
             for w in h.iter() {
                 write!(file, "{}", *w as u8).unwrap();
+            }
+            writeln!(file).unwrap();
+        }
+        
+        if File::open(EXPORT_BG).is_ok() {
+            fs::remove_file(EXPORT_BG).unwrap();
+        }
+        let mut file = File::create(EXPORT_BG).unwrap();
+        for (y, h) in self.chunks[1].iter().enumerate() {
+            for (x, w) in h.iter().enumerate() {
+                if self.check_foreground_chunktype(x, y) {
+                    write!(file, "0").unwrap();
+                } else {
+                    write!(file, "{}", *w as u8).unwrap();
+                }
             }
             writeln!(file).unwrap();
         }
@@ -268,6 +306,13 @@ impl World {
         writeln!(file, "\t\"y\": {},", self.spawn_chunk.0).unwrap();
         writeln!(file, "\t\"depth\": 750").unwrap();
         writeln!(file, "}}").unwrap();
+    }
+
+    fn check_foreground_chunktype(&self, x: usize, y: usize) -> bool {
+        self.chunks[0][y][x] != ChunkType::Air &&
+        self.chunks[0][y][x] != ChunkType::CheckPoint &&
+        self.chunks[0][y][x] != ChunkType::Spikes &&
+        self.chunks[0][y][x] != ChunkType::TallGrass
     }
 }
 
